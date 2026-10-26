@@ -1,5 +1,6 @@
 package com.example.commerce.inventory;
 
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,7 +21,12 @@ public class InventoryService {
         }
         inventory.setAvailableQuantity(inventory.getAvailableQuantity() - quantity);
         inventory.setReservedQuantity(inventory.getReservedQuantity() + quantity);
-        repository.save(inventory);
+        try {
+            repository.save(inventory);
+            repository.flush();
+        } catch (OptimisticLockingFailureException e) {
+            throw new OutOfStockException("Insufficient stock for product " + productId);
+        }
     }
 
     @Transactional

@@ -14,6 +14,7 @@ import com.example.commerce.orders.PaymentStatus;
 import com.example.commerce.payments.PaymentResult;
 import com.example.commerce.payments.PaymentService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,22 +44,23 @@ public class CheckoutService {
         this.vatRateBasisPoints = new BigDecimal(vatRate).movePointRight(4).intValue();
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = DataIntegrityViolationException.class)
     public Order checkout(String cookieId, String idempotencyKey, String correlationId, String traceId) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("Idempotency-Key header is required");
+        }
         Cart cart = cartService.get(cookieId);
         if (cart == null || cart.getItems().isEmpty()) {
             throw new IllegalArgumentException("Cart is empty");
         }
         String requestHash = hash(cookieId + cart.getItems().size() + cart.getItems().stream().map(i -> i.getProductId()+":"+i.getQuantity()).reduce("", (a,b)->a+b));
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
-            if (existing.isPresent()) {
-                Order o = existing.get();
-                if (o.getCheckoutRequestHash() != null && !o.getCheckoutRequestHash().equals(requestHash)) {
-                    throw new IdempotencyConflictException("Idempotency key reused with different payload");
-                }
-                return o;
+        var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            Order o = existing.get();
+            if (o.getCheckoutRequestHash() != null && !o.getCheckoutRequestHash().equals(requestHash)) {
+                throw new IdempotencyConflictException("Idempotency key reused with different payload");
             }
+            return o;
         }
 
         Order order = new Order();
@@ -96,22 +98,30 @@ public class CheckoutService {
         order.setSubtotalCents(subtotal);
         order.setVatCents(vatTotal);
         order.setTotalCents(subtotal + vatTotal);
-        orderRepository.save(order);
+        try {
+            orderRepository.saveAndFlush(order);
+        } catch (DataIntegrityViolationException e) {
+            Order dup = orderRepository.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> e);
+            if (dup.getCheckoutRequestHash() != null && !dup.getCheckoutRequestHash().equals(requestHash)) {
+                throw new IdempotencyConflictException("Idempotency key reused with different payload");
+            }
+            return dup;
+        }
 
         try {
             for (var ci : cart.getItems()) {
                 inventoryService.reserve(ci.getProductId(), ci.getQuantity());
             }
             order.transitionTo(OrderStatus.INVENTORY_RESERVED);
-            orderRepository.save(order);
+            orderRepository.saveAndFlush(order);
         } catch (OutOfStockException e) {
             order.transitionTo(OrderStatus.INVENTORY_FAILED);
-            orderRepository.save(order);
+            orderRepository.saveAndFlush(order);
             throw e;
         }
 
         order.transitionTo(OrderStatus.PAYMENT_PENDING);
-        orderRepository.save(order);
+        orderRepository.saveAndFlush(order);
 
         String paymentKey = (idempotencyKey != null && !idempotencyKey.isBlank())
                 ? idempotencyKey + "-payment" : "payment-" + order.getId();
@@ -127,7 +137,7 @@ public class CheckoutService {
                 inventoryService.release(ci.getProductId(), ci.getQuantity());
             }
         }
-        orderRepository.save(order);
+        orderRepository.saveAndFlush(order);
         return order;
     }
 

@@ -65,8 +65,10 @@ class InventoryReservationConcurrencyTest {
                     start.await();
                     inventoryService.reserve(p.getId(), 1);
                     success.incrementAndGet();
-                } catch (Exception e) {
+                } catch (com.example.commerce.inventory.OutOfStockException e) {
                     failure.incrementAndGet();
+                } catch (Exception e) {
+                    throw new AssertionError(e);
                 }
             });
         }

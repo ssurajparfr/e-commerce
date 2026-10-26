@@ -45,8 +45,26 @@ public class CartController {
         String cookie = cookieValue(request);
         Cart cart = cartService.getOrCreate(cookie);
         setCookie(response, cart.getCookieId());
-        Long productId = Long.valueOf(body.get("productId").toString());
-        int quantity = Integer.parseInt(body.getOrDefault("quantity", 1).toString());
+        Object pidObj = body.get("productId");
+        if (pidObj == null) {
+            throw new IllegalArgumentException("productId is required");
+        }
+        long productId;
+        try {
+            productId = Long.parseLong(pidObj.toString());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("productId must be a number");
+        }
+        Object qObj = body.getOrDefault("quantity", 1);
+        int quantity;
+        try {
+            quantity = Integer.parseInt(qObj.toString());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("quantity must be a number");
+        }
+        if (quantity < 1) {
+            throw new IllegalArgumentException("quantity must be >= 1");
+        }
         return cartService.addItem(cart.getCookieId(), productId, quantity);
     }
 }
