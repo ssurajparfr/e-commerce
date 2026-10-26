@@ -1,0 +1,38 @@
+ALTER TABLE orders ADD CONSTRAINT orders_status_check
+    CHECK (status IN ('CREATED','INVENTORY_RESERVED','PAYMENT_PENDING','CONFIRMED','FULFILLMENT_PENDING','SHIPPED','DELIVERED','INVENTORY_FAILED','PAYMENT_FAILED','CANCELLED','EXPIRED'));
+
+ALTER TABLE orders ADD CONSTRAINT orders_payment_status_check
+    CHECK (payment_status IN ('PENDING','SUCCESS','FAILED'));
+
+CREATE OR REPLACE FUNCTION enforce_order_status_transition() RETURNS trigger AS $$
+BEGIN
+    IF OLD.status = NEW.status THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'CREATED' AND NEW.status IN ('INVENTORY_RESERVED','INVENTORY_FAILED','CANCELLED','EXPIRED') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'INVENTORY_RESERVED' AND NEW.status IN ('PAYMENT_PENDING','CANCELLED','EXPIRED') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'PAYMENT_PENDING' AND NEW.status IN ('CONFIRMED','PAYMENT_FAILED','CANCELLED','EXPIRED') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'CONFIRMED' AND NEW.status IN ('FULFILLMENT_PENDING','CANCELLED') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'FULFILLMENT_PENDING' AND NEW.status IN ('SHIPPED','CANCELLED') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'SHIPPED' AND NEW.status = 'DELIVERED' THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'Invalid order status transition from % to %', OLD.status, NEW.status;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER orders_status_transition
+BEFORE UPDATE OF status ON orders
+FOR EACH ROW
+WHEN (OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION enforce_order_status_transition();

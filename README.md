@@ -22,23 +22,24 @@ Application code is added by factory jobs. The first job is the walking
 skeleton: catalog → cart → guest checkout → mock payment → order confirmation,
 using PostgreSQL only.
 
-## Quick start (available after the walking-skeleton job)
+## Quick start
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres
+# Ensure the shared PostgreSQL instance is running on localhost:5432
+# with database ecom_001_walking_skeleton.
 
-# Backend (from backend/)
-./mvnw spring-boot:run
+# Backend (from repo root)
+PORT=5110 SERVER_PORT=5210 ./mvnw -pl backend spring-boot:run
 
 # Frontend (from frontend/)
 pnpm install
-pnpm dev
+PORT=5110 SERVER_PORT=5210 pnpm dev
 ```
 
-- Storefront: `http://localhost:5173/`
+- Storefront: `http://localhost:5110/` (factory) or `http://localhost:5173/` (default)
 - Operations console: `http://localhost:5173/ops`
-- Backend API: `http://localhost:5273/api`
+- Backend API: `http://localhost:5210/api` (factory) or `http://localhost:5273/api` (default)
 - Vite proxies `/api` to the backend on `PORT + 100`.
 
 For factory jobs, use the orchestrator-assigned port instead of `5173`; the
