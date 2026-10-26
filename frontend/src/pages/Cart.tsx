@@ -7,7 +7,7 @@ type Cart = { id: number; items: CartItem[] }
 type Product = { id: number; name: string; priceCents: number }
 
 export default function Cart() {
-  const { data: cart, isLoading, isError, refetch } = useQuery<Cart>({
+  const { data: cart, isLoading: cartLoading, isError: cartError, refetch: refetchCart } = useQuery<Cart>({
     queryKey: ['cart'],
     queryFn: async () => {
       const res = await fetch('/api/cart')
@@ -15,7 +15,7 @@ export default function Cart() {
       return res.json()
     }
   })
-  const { data: products } = useQuery<{ content: Product[] }>({
+  const { data: products, isLoading: productsLoading, isError: productsError, refetch: refetchProducts } = useQuery<{ content: Product[] }>({
     queryKey: ['products'],
     queryFn: async () => {
       const res = await fetch('/api/products')
@@ -24,13 +24,13 @@ export default function Cart() {
     }
   })
 
-  if (isLoading) return <div>Loading cart...</div>
-  if (isError) {
+  if (cartLoading || productsLoading) return <div>Loading cart...</div>
+  if (cartError || productsError) {
     return (
       <div>
         <h1 className="text-2xl font-bold mb-4">Cart</h1>
         <p className="text-red-600">Could not load cart.</p>
-        <button className="mt-2 px-3 py-1 bg-blue-600 text-white rounded" onClick={() => refetch()}>
+        <button className="mt-2 px-3 py-1 bg-blue-600 text-white rounded" onClick={() => { refetchCart(); refetchProducts() }}>
           Retry
         </button>
       </div>
@@ -39,7 +39,9 @@ export default function Cart() {
 
   const items = cart?.items ?? []
   const priceOf = (id: number) => products?.content?.find(p => p.id === id)?.priceCents ?? 0
-  const total = items.reduce((sum, i) => sum + priceOf(i.productId) * i.quantity, 0)
+  const subtotal = items.reduce((sum, i) => sum + priceOf(i.productId) * i.quantity, 0)
+  const vat = Math.round(subtotal * 0.2)
+  const total = subtotal + vat
 
   return (
     <div>
@@ -53,7 +55,9 @@ export default function Cart() {
       ))}
       {items.length > 0 && (
         <>
-          <div className="mt-2 font-semibold">Total: {formatCents(total)}</div>
+          <div className="mt-2">Subtotal: {formatCents(subtotal)}</div>
+          <div>VAT (20%): {formatCents(vat)}</div>
+          <div className="font-semibold">Total: {formatCents(total)}</div>
           <Link to="/checkout" className="inline-block mt-4 px-3 py-1 bg-blue-600 text-white rounded">
             Checkout
           </Link>

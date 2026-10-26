@@ -29,22 +29,24 @@ public class CheckoutService {
     private final ProductRepository productRepository;
     private final InventoryService inventoryService;
     private final OrderRepository orderRepository;
+    private final IdempotencyService idempotencyService;
     private final PaymentService paymentService;
     private final int vatRateBasisPoints;
 
     public CheckoutService(CartService cartService, ProductRepository productRepository,
                            InventoryService inventoryService, OrderRepository orderRepository,
-                           PaymentService paymentService,
+                           IdempotencyService idempotencyService, PaymentService paymentService,
                            @Value("${commerce.vat-rate:0.20}") String vatRate) {
         this.cartService = cartService;
         this.productRepository = productRepository;
         this.inventoryService = inventoryService;
         this.orderRepository = orderRepository;
+        this.idempotencyService = idempotencyService;
         this.paymentService = paymentService;
         this.vatRateBasisPoints = new BigDecimal(vatRate).movePointRight(4).intValue();
     }
 
-    @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    @Transactional
     public Order checkout(String cookieId, String idempotencyKey, String correlationId, String traceId) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("Idempotency-Key header is required");
@@ -54,58 +56,23 @@ public class CheckoutService {
             throw new IllegalArgumentException("Cart is empty");
         }
         String requestHash = hash(cookieId + cart.getItems().size() + cart.getItems().stream().map(i -> i.getProductId()+":"+i.getQuantity()).reduce("", (a,b)->a+b));
-        var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
-        if (existing.isPresent()) {
-            Order o = existing.get();
-            if (o.getCheckoutRequestHash() != null && !o.getCheckoutRequestHash().equals(requestHash)) {
-                throw new IdempotencyConflictException("Idempotency key reused with different payload");
-            }
-            return o;
-        }
 
-        Order order = new Order();
-        order.setGuestRef(cookieId);
-        order.setIdempotencyKey(idempotencyKey);
-        order.setCheckoutRequestHash(requestHash);
-        order.setCorrelationId(correlationId);
-        order.setTraceId(traceId);
-        order.setVatRateBasisPoints(vatRateBasisPoints);
-
-        long subtotal = 0;
-        long vatTotal = 0;
-        for (var ci : cart.getItems()) {
-            Product product = productRepository.findById(ci.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException("Product not found"));
-            if (!product.isActive()) {
-                throw new IllegalArgumentException("Product not active");
-            }
-            int qty = ci.getQuantity();
-            long unitPrice = product.getPriceCents();
-            long lineSubtotal = unitPrice * qty;
-            long lineVat = (lineSubtotal * vatRateBasisPoints) / 10000;
-            long lineTotal = lineSubtotal + lineVat;
-            OrderItem item = new OrderItem();
-            item.setProductId(product.getId());
-            item.setDescription(product.getName());
-            item.setUnitPriceCents(unitPrice);
-            item.setVatRateBasisPoints(vatRateBasisPoints);
-            item.setQuantity(qty);
-            item.setLineTotalCents(lineTotal);
-            order.addItem(item);
-            subtotal += lineSubtotal;
-            vatTotal += lineVat;
-        }
-        order.setSubtotalCents(subtotal);
-        order.setVatCents(vatTotal);
-        order.setTotalCents(subtotal + vatTotal);
+        Order order;
         try {
-            orderRepository.saveAndFlush(order);
+            order = idempotencyService.reserveIdempotentOrder(cookieId, idempotencyKey, requestHash, correlationId, traceId, cart);
         } catch (DataIntegrityViolationException e) {
-            Order dup = orderRepository.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> e);
-            if (dup.getCheckoutRequestHash() != null && !dup.getCheckoutRequestHash().equals(requestHash)) {
+            Order existing = idempotencyService.findExistingOrder(idempotencyKey);
+            if (existing == null) {
+                throw e;
+            }
+            if (existing.getCheckoutRequestHash() != null && !existing.getCheckoutRequestHash().equals(requestHash)) {
                 throw new IdempotencyConflictException("Idempotency key reused with different payload");
             }
-            return dup;
+            return existing;
+        }
+        // Existing order: do not reprocess inventory or payment.
+        if (order.getStatus() != OrderStatus.CREATED) {
+            return order;
         }
 
         try {
@@ -115,23 +82,20 @@ public class CheckoutService {
             order.transitionTo(OrderStatus.INVENTORY_RESERVED);
             orderRepository.saveAndFlush(order);
         } catch (OutOfStockException e) {
-            order.transitionTo(OrderStatus.INVENTORY_FAILED);
-            orderRepository.saveAndFlush(order);
             throw e;
         }
 
         order.transitionTo(OrderStatus.PAYMENT_PENDING);
         orderRepository.saveAndFlush(order);
 
-        String paymentKey = (idempotencyKey != null && !idempotencyKey.isBlank())
-                ? idempotencyKey + "-payment" : "payment-" + order.getId();
-        PaymentResult result = paymentService.charge(order, order.getTotalCents(), paymentKey, requestHash);
+        String paymentKey = idempotencyKey + "-payment";
+        com.example.commerce.payments.PaymentResult result = paymentService.charge(order, order.getTotalCents(), paymentKey, requestHash);
 
         if ("SUCCESS".equals(result.status())) {
-            order.setPaymentStatus(PaymentStatus.SUCCESS);
+            order.setPaymentStatus(com.example.commerce.orders.PaymentStatus.SUCCESS);
             order.transitionTo(OrderStatus.CONFIRMED);
         } else {
-            order.setPaymentStatus(PaymentStatus.FAILED);
+            order.setPaymentStatus(com.example.commerce.orders.PaymentStatus.FAILED);
             order.transitionTo(OrderStatus.PAYMENT_FAILED);
             for (var ci : cart.getItems()) {
                 inventoryService.release(ci.getProductId(), ci.getQuantity());

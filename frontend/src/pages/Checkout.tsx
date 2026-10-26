@@ -1,12 +1,17 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { formatCents } from '../lib/money'
+import { useState } from 'react'
 
 export default function Checkout() {
   const navigate = useNavigate()
-  const { data: cart } = useQuery({
+  const [idempotencyKey] = useState(() => 'idem-' + Math.random().toString(36).slice(2))
+  const { data: cart, isLoading, isError, refetch } = useQuery({
     queryKey: ['cart'],
-    queryFn: async () => (await fetch('/api/cart')).json()
+    queryFn: async () => {
+      const res = await fetch('/api/cart')
+      if (!res.ok) throw new Error('Failed to load cart')
+      return res.json()
+    }
   })
   const mutation = useMutation({
     mutationFn: async () => {
@@ -14,7 +19,7 @@ export default function Checkout() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': 'idem-' + Math.random().toString(36).slice(2)
+          'Idempotency-Key': idempotencyKey
         },
         body: JSON.stringify({})
       })
@@ -23,18 +28,33 @@ export default function Checkout() {
     },
     onSuccess: (data) => navigate(`/orders/${data.id}`)
   })
+
+  if (isLoading) return <div>Loading cart...</div>
+  if (isError) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold mb-4">Checkout</h1>
+        <p className="text-red-600">Could not load cart.</p>
+        <button className="mt-2 px-3 py-1 bg-blue-600 text-white rounded" onClick={() => refetch()}>
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  const isEmpty = !cart?.items?.length
   return (
     <div>
       <h1 className="text-2xl font-bold mb-4">Checkout</h1>
-      {cart?.items?.length ? (
-        <div className="mb-4 text-gray-700">Items in cart: {cart.items.length}</div>
-      ) : (
+      {isEmpty ? (
         <div className="mb-4 text-gray-700">Your cart is empty.</div>
+      ) : (
+        <div className="mb-4 text-gray-700">Items in cart: {cart.items.length}</div>
       )}
       <button
         className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
         onClick={() => mutation.mutate()}
-        disabled={mutation.isPending || !cart?.items?.length}
+        disabled={mutation.isPending || isEmpty}
       >
         {mutation.isPending ? 'Processing...' : 'Place order'}
       </button>

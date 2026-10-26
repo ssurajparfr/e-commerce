@@ -1,5 +1,6 @@
 package com.example.commerce.orders;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ public class Order {
     private Long id;
 
     @Column(name = "guest_ref")
+    @JsonIgnore
     private String guestRef;
 
     @Enumerated(EnumType.STRING)
@@ -39,15 +41,19 @@ public class Order {
     private int vatRateBasisPoints;
 
     @Column(name = "idempotency_key")
+    @JsonIgnore
     private String idempotencyKey;
 
     @Column(name = "checkout_request_hash")
+    @JsonIgnore
     private String checkoutRequestHash;
 
     @Column(name = "correlation_id")
+    @JsonIgnore
     private String correlationId;
 
     @Column(name = "trace_id")
+    @JsonIgnore
     private String traceId;
 
     @Column(name = "created_at", nullable = false)

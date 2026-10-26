@@ -42,9 +42,6 @@ public class CartController {
 
     @PostMapping("/items")
     public Cart addItem(@RequestBody Map<String, Object> body, HttpServletRequest request, HttpServletResponse response) {
-        String cookie = cookieValue(request);
-        Cart cart = cartService.getOrCreate(cookie);
-        setCookie(response, cart.getCookieId());
         Object pidObj = body.get("productId");
         if (pidObj == null) {
             throw new IllegalArgumentException("productId is required");
@@ -65,6 +62,10 @@ public class CartController {
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity must be >= 1");
         }
+
+        String cookie = cookieValue(request);
+        Cart cart = cartService.getOrCreate(cookie);
+        setCookie(response, cart.getCookieId());
         return cartService.addItem(cart.getCookieId(), productId, quantity);
     }
 }

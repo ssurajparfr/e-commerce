@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test('Catalog browse shows seeded products', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Widget')).toBeVisible()
-  await expect(page.getByText('€10.00')).toBeVisible()
+  await expect(page.getByText('Price: €10.00')).toBeVisible()
   await expect(page.getByText('Active: true')).toBeVisible()
 })
 
@@ -26,14 +26,22 @@ test('Checkout computes server-side totals', async ({ page }) => {
     page.waitForResponse(r => r.url().includes('/api/cart/items')),
     page.getByRole('button', { name: /Add .* to cart/ }).click()
   ])
-  await page.goto('/cart')
-  await page.goto('/checkout')
-  // submit with tampered price ignored by server; no client price field sent
-  const [response] = await Promise.all([
-    page.waitForResponse(r => r.url().includes('/api/checkout')),
-    page.getByRole('button', { name: 'Place order' }).click()
-  ])
+  const cookies = await page.context().cookies()
+  const cartCookie = cookies.find(c => c.name === 'cart_id')
+  expect(cartCookie).toBeTruthy()
+  const response = await page.request.post('/api/checkout', {
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': 'totals-' + Date.now(),
+      Cookie: `cart_id=${cartCookie!.value}`
+    },
+    data: { price: 999999 }
+  })
   expect(response.ok()).toBeTruthy()
+  const body = await response.json()
+  expect(body.subtotalCents).toBe(1000)
+  expect(body.vatCents).toBe(200)
+  expect(body.totalCents).toBe(1200)
 })
 
 test('Order reaches CONFIRMED and shows confirmation', async ({ page }) => {

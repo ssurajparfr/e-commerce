@@ -15,7 +15,7 @@ public class CheckoutController {
     public CheckoutController(CheckoutService checkoutService) { this.checkoutService = checkoutService; }
 
     @PostMapping
-    public Order checkout(@RequestHeader(value = "Idempotency-Key") String idempotencyKey,
+    public Order checkout(@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                           @RequestBody(required = false) Map<String, Object> body,
                           HttpServletRequest request) {
         String cookie = null;
